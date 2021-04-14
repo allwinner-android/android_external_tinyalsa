@@ -31,6 +31,8 @@
 
 #include <sys/time.h>
 #include <stddef.h>
+#include <assert.h>
+#include <sound/asound.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -68,6 +70,9 @@ struct pcm;
 #define	PCM_STATE_SUSPENDED	7
 #define	PCM_STATE_DISCONNECTED	8
 
+typedef struct snd_pcm_info snd_pcm_info_t;
+#define __tinyalsa_alloca(ptr,type) do { *ptr = (type *) alloca(sizeof(type)); memset(*ptr, 0, sizeof(type)); } while (0)
+#define pcm_info_alloca(ptr) __tinyalsa_alloca(ptr, snd_pcm_info_t)
 /* Bit formats */
 enum pcm_format {
     PCM_FORMAT_INVALID = -1,
@@ -93,26 +98,25 @@ struct pcm_config {
     unsigned int period_count;
     enum pcm_format format;
 
-    /* Values to use for the ALSA start, stop and silence thresholds, and
-     * silence size.  Setting any one of these values to 0 will cause the
-     * default tinyalsa values to be used instead.
-     * Tinyalsa defaults are as follows.
+    /* Values to use for the ALSA start, stop and silence thresholds.  Setting
+     * any one of these values to 0 will cause the default tinyalsa values to be
+     * used instead.  Tinyalsa defaults are as follows.
      *
      * start_threshold   : period_count * period_size
      * stop_threshold    : period_count * period_size
      * silence_threshold : 0
-     * silence_size      : 0
      */
     unsigned int start_threshold;
     unsigned int stop_threshold;
     unsigned int silence_threshold;
-    unsigned int silence_size;
 
     /* Minimum number of frames available before pcm_mmap_write() will actually
      * write into the kernel buffer. Only used if the stream is opened in mmap mode
      * (pcm_open() called with PCM_MMAP flag set).   Use 0 for default.
      */
     int avail_min;
+    int raw_flag;
+    unsigned int in_init_channels;//keep the record init channels
 };
 
 /* PCM parameters */
@@ -135,6 +139,14 @@ enum pcm_param
     PCM_PARAM_BUFFER_SIZE,
     PCM_PARAM_BUFFER_BYTES,
     PCM_PARAM_TICK_TIME,
+};
+/** PCM stream (direction) */
+enum pcm_stream {
+	/** Playback stream */
+	PCM_STREAM_PLAYBACK = 0,
+	/** Capture stream */
+	PCM_STREAM_CAPTURE,
+	PCM_STREAM_LAST = PCM_STREAM_CAPTURE
 };
 
 /* Mixer control types */
@@ -226,6 +238,7 @@ int pcm_get_htimestamp(struct pcm *pcm, unsigned int *avail,
  */
 int pcm_write(struct pcm *pcm, const void *data, unsigned int count);
 int pcm_read(struct pcm *pcm, void *data, unsigned int count);
+int pcm_read_ex(struct pcm *pcm, void *data, unsigned int count);
 
 /*
  * mmap() support.
@@ -235,7 +248,6 @@ int pcm_mmap_read(struct pcm *pcm, void *data, unsigned int count);
 int pcm_mmap_begin(struct pcm *pcm, void **areas, unsigned int *offset,
                    unsigned int *frames);
 int pcm_mmap_commit(struct pcm *pcm, unsigned int offset, unsigned int frames);
-int pcm_mmap_avail(struct pcm *pcm);
 
 /* Prepare the PCM substream to be triggerable */
 int pcm_prepare(struct pcm *pcm);
@@ -248,12 +260,43 @@ int pcm_ioctl(struct pcm *pcm, int request, ...);
 
 /* Interrupt driven API */
 int pcm_wait(struct pcm *pcm, int timeout);
-int pcm_get_poll_fd(struct pcm *pcm);
 
 /* Change avail_min after the stream has been opened with no need to stop the stream.
  * Only accepted if opened with PCM_MMAP and PCM_NOIRQ flags
  */
 int pcm_set_avail_min(struct pcm *pcm, int avail_min);
+/**
+ *  Set wanted device inside a PCM info container
+ *  param obj PCM info container
+ *  param val Device number
+ **/
+void pcm_info_set_device(snd_pcm_info_t *obj, unsigned int val);
+/**
+ * Set wanted subdevice inside a PCM info container
+ * param obj PCM info container
+ * param val Subdevice number
+ **/
+void pcm_info_set_subdevice(snd_pcm_info_t *obj, unsigned int val);
+
+/**
+ * param obj PCM info container
+ * param val Stream
+ **/
+void pcm_info_set_stream(snd_pcm_info_t *obj, unsigned int val);
+
+/**
+ * Get id from a PCM info container
+ * param obj PCM info container
+ * return short id of PCM
+ **/
+const char *pcm_info_get_id(snd_pcm_info_t *obj);
+
+/**
+ * Get name from a PCM info container
+ * param obj PCM info container
+ * return name of PCM
+ **/
+const char *pcm_info_get_name(snd_pcm_info_t *obj);
 
 /*
  * MIXER API
@@ -303,6 +346,40 @@ int mixer_ctl_set_enum_by_string(struct mixer_ctl *ctl, const char *string);
 int mixer_ctl_get_range_min(struct mixer_ctl *ctl);
 int mixer_ctl_get_range_max(struct mixer_ctl *ctl);
 
+/**
+ * Try to determine the next card
+ * param rcard pointer to card number
+ * result zero if success, otherwise a negative error code
+ **/
+int mixer_card_next(int *rcard);
+
+/**
+ * Get next PCM device number
+ * param device current device on entry and next device on return
+ * return 0 on success otherwise a negative error code
+ **/
+int mixer_ctl_pcm_next_device(struct mixer *mixer, int *device);
+
+/**
+ * Get info about a PCM device
+ * param info PCM device id/info pointer
+ * return 0 on success otherwise a negative error code
+ **/
+int mixer_ctl_pcm_info(struct mixer *mixer, snd_pcm_info_t *info);
+
+/**
+ * Get card identifier from a CTL card info
+ * param obj CTL card info
+ * return card identifier
+ **/
+const char *mixer_ctl_card_info_get_id(const struct snd_ctl_card_info *obj);
+
+/**
+ * Get card identifier from a CTL card info
+ * param obj CTL card info
+ * return card name
+ **/
+const char *mixer_ctl_card_info_get_name(const struct snd_ctl_card_info *obj);
 #if defined(__cplusplus)
 }  /* extern "C" */
 #endif
